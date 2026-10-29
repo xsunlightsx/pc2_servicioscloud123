@@ -1,0 +1,111 @@
+# ---------- Credenciales (solo para laboratorio; en producción iría en un gestor de secretos) ----------
+apiVersion: v1
+kind: Secret
+metadata:
+  name: postgres-credenciales
+  namespace: ventas
+type: Opaque
+stringData:
+  POSTGRES_USER: ventas_user
+  POSTGRES_PASSWORD: ventas_pass
+  POSTGRES_DB: ventasdb
+---
+# ---------- Esquema inicial: se ejecuta SOLO la primera vez (cuando el volumen está vacío) ----------
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-init
+  namespace: ventas
+data:
+  init.sql: |
+    CREATE TABLE IF NOT EXISTS ventas (
+      id_venta                  VARCHAR(10)  PRIMARY KEY,   -- clave primaria = control de duplicados
+      fecha_hora                TIMESTAMP    NOT NULL,
+      sucursal                  VARCHAR(50)  NOT NULL,
+      categoria                 VARCHAR(50)  NOT NULL,
+      cantidad                  INT          NOT NULL CHECK (cantidad > 0),
+      precio_unitario_centimos  BIGINT       NOT NULL,
+      importe_centimos          BIGINT       NOT NULL,      -- cantidad * precio, en céntimos enteros
+      procesador                VARCHAR(100) NOT NULL,      -- nombre del pod que la procesó
+      procesado_en              TIMESTAMP    NOT NULL DEFAULT now()
+    );
+---
+# ---------- Volumen persistente ----------
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-pvc
+  namespace: ventas
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 2Gi
+---
+# ---------- PostgreSQL: UNA sola instancia ----------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: ventas
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate            # nunca dos pods escribiendo en el mismo volumen
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16
+          ports:
+            - containerPort: 5432
+          envFrom:
+            - secretRef:
+                name: postgres-credenciales
+          env:
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+            - name: datos
+              mountPath: /var/lib/postgresql/data
+            - name: init
+              mountPath: /docker-entrypoint-initdb.d
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "ventas_user", "-d", "ventasdb"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+      volumes:
+        - name: datos
+          persistentVolumeClaim:
+            claimName: postgres-pvc
+        - name: init
+          configMap:
+            name: postgres-init
+---
+# ---------- Servicio interno: los demás pods lo ven como "postgres:5432" ----------
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: ventas
+spec:
+  type: ClusterIP
+  selector:
+    app: postgres
+  ports:
+    - port: 5432
+      targetPort: 5432

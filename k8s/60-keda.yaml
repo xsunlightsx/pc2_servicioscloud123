@@ -1,0 +1,55 @@
+# ---------- Cómo KEDA se conecta a RabbitMQ (API de gestión, puerto 15672) ----------
+# Se usa HTTP (y no AMQP) porque así QueueLength cuenta mensajes LISTOS + SIN CONFIRMAR.
+# OJO: el operador de KEDA corre en OTRO namespace ("keda"), por eso el host lleva el nombre
+# completo del servicio: rabbitmq.ventas.svc.cluster.local (con "rabbitmq" a secas no resuelve).
+apiVersion: v1
+kind: Secret
+metadata:
+  name: keda-rabbitmq-secret
+  namespace: ventas
+type: Opaque
+stringData:
+  host: http://ventas_user:ventas_pass@rabbitmq.ventas.svc.cluster.local:15672/
+---
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: keda-rabbitmq-auth
+  namespace: ventas
+spec:
+  secretTargetRef:
+    - parameter: host
+      name: keda-rabbitmq-secret
+      key: host
+---
+# ---------- Elasticidad automática del Deployment "procesador" ----------
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: procesador-scaler
+  namespace: ventas
+spec:
+  scaleTargetRef:
+    name: procesador            # el ÚNICO Deployment que escala
+  minReplicaCount: 1
+  maxReplicaCount: 2
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleUp:
+          stabilizationWindowSeconds: 0     # subir en cuanto la cola lo pida
+        scaleDown:
+          stabilizationWindowSeconds: 120   # esperar 2 min con la cola baja antes de bajar a 1 pod
+          policies:
+            - type: Pods
+              value: 1
+              periodSeconds: 30
+  triggers:
+    - type: rabbitmq
+      metadata:
+        protocol: http
+        queueName: ventas
+        mode: QueueLength
+        value: "100"            # objetivo: 100 mensajes por réplica
+      authenticationRef:
+        name: keda-rabbitmq-auth

@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Procesamiento de ventas - Servicios Cloud</title>
+<style>
+  body { font-family: Segoe UI, Arial, sans-serif; margin: 0; background: #f3f4f8; color: #1f2430; }
+  header { background: #b3102f; color: #fff; padding: 14px 24px; }
+  header h1 { margin: 0; font-size: 20px; }
+  main { padding: 20px 24px; max-width: 1150px; margin: auto; }
+  .panel { background: #fff; border-radius: 10px; padding: 16px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+  .controles { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+  button { border: 0; border-radius: 6px; padding: 9px 16px; font-size: 14px; cursor: pointer; background: #2b4acb; color: #fff; }
+  button.sec { background: #5b6270; }
+  button.pausa { background: #d98a00; }
+  select { padding: 8px; font-size: 14px; border-radius: 6px; }
+  .tarjetas { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+  .tarjeta { background: #fff; border-radius: 10px; padding: 14px; box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+  .tarjeta .t { font-size: 12px; color: #667; text-transform: uppercase; }
+  .tarjeta .v { font-size: 28px; font-weight: 600; margin-top: 4px; }
+  .tarjeta .s { font-size: 12px; color: #667; margin-top: 4px; }
+  .dos { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #e3e5ec; }
+  td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
+  .ok { color: #1a8a3a; font-weight: 700; } .mal { color: #c0262d; font-weight: 700; }
+  #error { color: #c0262d; font-size: 13px; margin-top: 8px; }
+  h2 { font-size: 15px; margin: 0 0 10px; }
+</style>
+</head>
+<body>
+<header><h1>Procesamiento de ventas - monitoreo (se actualiza cada 2 s)</h1></header>
+<main>
+  <div class="panel">
+    <div class="controles">
+      <label>Ventas por segundo:
+        <select id="tasa">
+          <option>1</option><option selected>3</option><option>5</option><option>10</option>
+          <option>15</option><option>20</option><option>30</option><option>50</option>
+        </select>
+      </label>
+      <button onclick="iniciar('manual')">Inicio</button>
+      <button class="pausa" onclick="accion('pausa')">Pausa</button>
+      <button onclick="accion('continuar')">Continuar</button>
+      <button class="sec" onclick="iniciar('perfil')" title="300 a 3/s, 3000 a 15/s, 6700 a 3/s">Inicio con perfil automático</button>
+      <button class="sec" onclick="accion('reenviar', {n: 100})">Reenviar 100 (duplicados)</button>
+      <button class="sec" onclick="accion('reiniciar')">Reiniciar generador</button>
+    </div>
+    <div id="error"></div>
+  </div>
+
+  <div class="tarjetas">
+    <div class="tarjeta"><div class="t">Generador</div><div class="v" id="gen">-</div><div class="s" id="gen2"></div></div>
+    <div class="tarjeta"><div class="t">Enviadas confirmadas</div><div class="v" id="env">-</div><div class="s" id="env2"></div></div>
+    <div class="tarjeta"><div class="t">Únicas procesadas</div><div class="v" id="uni">-</div><div class="s" id="uni2"></div></div>
+    <div class="tarjeta"><div class="t">Pendientes de procesar</div><div class="v" id="pen">-</div><div class="s" id="pen2"></div></div>
+    <div class="tarjeta"><div class="t">Procesadores conectados</div><div class="v" id="con">-</div><div class="s" id="con2"></div></div>
+  </div>
+
+  <div class="dos" style="margin-top:16px">
+    <div class="panel"><h2>Totales por sucursal</h2><table id="tsuc"></table></div>
+    <div class="panel"><h2>Totales por categoría</h2><table id="tcat"></table></div>
+  </div>
+  <div class="dos">
+    <div class="panel"><h2>Importe general</h2><table id="tgen"></table></div>
+    <div class="panel"><h2>Ventas procesadas por cada procesador (pod)</h2><table id="tpro"></table></div>
+  </div>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const soles = c => 'S/ ' + (c / 100).toLocaleString('es-PE', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+let estadoGen = '';
+
+async function accion(nombre, cuerpo) {
+  try {
+    await fetch('/api/accion/' + nombre, {method: 'POST', headers: {'Content-Type': 'application/json'},
+                                          body: JSON.stringify(cuerpo || {})});
+  } catch (e) { $('error').textContent = 'Error: ' + e; }
+  refrescar();
+}
+function iniciar(modo) { accion('iniciar', {modo: modo, tasa: parseFloat($('tasa').value)}); }
+$('tasa').addEventListener('change', () => {
+  if (estadoGen === 'enviando') accion('tasa', {tasa: parseFloat($('tasa').value)});
+});
+
+function tabla(el, datos, ref, completo) {
+  const claves = Array.from(new Set([...Object.keys(datos || {}), ...Object.keys(ref || {})])).sort();
+  let h = '<tr><th>Clave</th><th class="n">Procesado</th><th class="n">Referencia</th><th></th></tr>';
+  for (const k of claves) {
+    const p = (datos || {})[k] || 0, r = (ref || {})[k];
+    const marca = (completo && r !== undefined) ? (p === r ? '<span class="ok">✓</span>' : '<span class="mal">✗</span>') : '';
+    h += `<tr><td>${k}</td><td class="n">${soles(p)}</td><td class="n">${r === undefined ? '-' : soles(r)}</td><td>${marca}</td></tr>`;
+  }
+  $(el).innerHTML = h;
+}
+
+function pintar(d) {
+  const g = d.generador || {}, r = d.rabbit || {}, b = d.db || {}, ref = d.referencia;
+  const errores = [g, r, b].filter(x => x.error).map(x => x.error);
+  $('error').textContent = errores.join(' | ');
+
+  if (!g.error) {
+    estadoGen = g.estado;
+    $('gen').textContent = g.estado;
+    $('gen2').textContent = g.fase + ' - ' + g.tasa_actual + ' ventas/s';
+    $('env').textContent = g.confirmadas;
+    $('env2').textContent = 'de ' + g.total + (g.reenviadas ? ' (+' + g.reenviadas + ' reenviadas)' : '');
+  }
+  if (!b.error) {
+    $('uni').textContent = b.unicas;
+    $('uni2').textContent = 'importe general ' + soles(b.total);
+    const completo = ref && b.unicas === ref.ventas_unicas;
+    tabla('tsuc', b.sucursal, ref && ref.por_sucursal_centimos, completo);
+    tabla('tcat', b.categoria, ref && ref.por_categoria_centimos, completo);
+    let h = '<tr><th></th><th class="n">Procesado</th><th class="n">Referencia</th><th></th></tr>';
+    const okU = completo ? (b.unicas === ref.ventas_unicas ? '<span class="ok">✓</span>' : '<span class="mal">✗</span>') : '';
+    const okT = completo ? (b.total === ref.importe_general_centimos ? '<span class="ok">✓</span>' : '<span class="mal">✗</span>') : '';
+    h += `<tr><td>Ventas únicas</td><td class="n">${b.unicas}</td><td class="n">${ref ? ref.ventas_unicas : '-'}</td><td>${okU}</td></tr>`;
+    h += `<tr><td>Importe general</td><td class="n">${soles(b.total)}</td><td class="n">${ref ? soles(ref.importe_general_centimos) : '-'}</td><td>${okT}</td></tr>`;
+    $('tgen').innerHTML = h;
+    let p = '<tr><th>Pod procesador</th><th class="n">Ventas</th></tr>';
+    for (const [k, v] of Object.entries(b.procesadores)) p += `<tr><td>${k}</td><td class="n">${v}</td></tr>`;
+    $('tpro').innerHTML = p;
+  }
+  if (!r.error) {
+    $('pen').textContent = r.listos + r.sin_confirmar;
+    $('pen2').textContent = 'listos ' + r.listos + ' - sin confirmar ' + r.sin_confirmar;
+    $('con').textContent = r.consumidores;
+    $('con2').textContent = 'consumidores en la cola';
+  }
+}
+
+async function refrescar() {
+  try { pintar(await (await fetch('/api/estado')).json()); }
+  catch (e) { $('error').textContent = 'Sin conexión con la web: ' + e; }
+}
+refrescar();
+setInterval(refrescar, 2000);
+</script>
+</body>
+</html>

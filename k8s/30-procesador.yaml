@@ -1,0 +1,63 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: procesador
+  namespace: ventas
+spec:
+  replicas: 1                      # KEDA/HPA lo moverá entre 1 y 2 (paso 5)
+  selector:
+    matchLabels:
+      app: procesador
+  template:
+    metadata:
+      labels:
+        app: procesador
+    spec:
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: procesador
+          image: procesador-ventas:1.0
+          imagePullPolicy: IfNotPresent     # usa la imagen local de Docker Desktop
+          env:
+            - name: POD_NAME                # nombre del pod => queda registrado en cada venta
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: RABBIT_HOST
+              value: rabbitmq
+            - name: RABBIT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: rabbitmq-credenciales
+                  key: RABBITMQ_DEFAULT_USER
+            - name: RABBIT_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: rabbitmq-credenciales
+                  key: RABBITMQ_DEFAULT_PASS
+            - name: DB_HOST
+              value: postgres
+            - name: DB_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-credenciales
+                  key: POSTGRES_DB
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-credenciales
+                  key: POSTGRES_USER
+            - name: DB_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-credenciales
+                  key: POSTGRES_PASSWORD
+            - name: VALIDACION_SEG
+              value: "0.2"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 128Mi

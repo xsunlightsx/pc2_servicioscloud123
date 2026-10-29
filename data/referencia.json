@@ -1,0 +1,20 @@
+{
+  "ventas_unicas": 10000,
+  "importe_general_centimos": 1316938998,
+  "importe_general": "13169389.98",
+  "por_sucursal_centimos": {
+    "Arequipa": 216259278,
+    "Cusco": 222225959,
+    "Lima Centro": 230926207,
+    "Lima Norte": 212435987,
+    "Lima Sur": 214661605,
+    "Trujillo": 220429962
+  },
+  "por_categoria_centimos": {
+    "Alimentos": 15683738,
+    "Deportes": 188601759,
+    "Electrónica": 776548428,
+    "Hogar": 240774198,
+    "Ropa": 95330875
+  }
+}
